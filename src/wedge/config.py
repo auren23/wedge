@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     min_city_samples: int = 5  # Min settled trades before applying city filter
     spread_baseline_f: float = 3.0  # Ensemble spread baseline (°F) for Kelly damping
 
+    weather_source: str = "openmeteo"  # 'openmeteo' or 'noaa'
+
     offsets_utc: list[str] = Field(
         default_factory=lambda: ["03:45", "09:45", "15:45", "21:45"]
         # GFS model runs at 00/06/12/18 UTC; data available ~3.5h later.

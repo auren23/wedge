@@ -21,7 +21,7 @@ from wedge.strategy.arbitrage import detect_bucket_arbitrage
 from wedge.strategy.performance import update_city_performance, get_city_filter, update_all_city_performance
 from wedge.strategy.portfolio import allocate
 from wedge.strategy.tail import evaluate_tail
-from wedge.weather.client import fetch_actual_temperature, fetch_ensemble
+from wedge.weather.client import fetch_actual_temperature, fetch_ensemble, fetch_ensemble_auto
 from wedge.weather.ensemble import parse_distribution
 
 if TYPE_CHECKING:
@@ -223,7 +223,7 @@ async def _process_city(
     log.info("processing_city", city=city_cfg.name, date=str(target_date))
 
     # 1. Fetch weather data
-    raw = await fetch_ensemble(http_client, city_cfg)
+    raw = await fetch_ensemble_auto(http_client, city_cfg, settings, target_date)
     if not raw:
         log.warning("no_weather_data", city=city_cfg.name)
         return 0
@@ -458,10 +458,10 @@ async def check_exit_positions(
 
             # Re-fetch latest forecast for this city
             try:
-                raw = await fetch_ensemble(http_client, city_cfg)
+                target_date = date.fromisoformat(date_str)
+                raw = await fetch_ensemble_auto(http_client, city_cfg, settings, target_date)
                 if not raw:
                     continue
-                target_date = date.fromisoformat(date_str)
                 forecast = parse_distribution(raw, city_name, target_date)
                 if not forecast:
                     continue
@@ -698,7 +698,7 @@ async def run_single_scan(settings: Settings, city_name: str) -> None:
 
     async with httpx.AsyncClient() as http_client:
 
-        raw = await fetch_ensemble(http_client, city_cfg)
+        raw = await fetch_ensemble_auto(http_client, city_cfg, settings, target_date)
         if not raw:
             log.error("no_weather_data", city=city_name)
             return

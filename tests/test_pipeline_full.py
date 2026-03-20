@@ -175,7 +175,7 @@ class TestProcessCity:
     @pytest.mark.asyncio
     async def test_no_weather_data_returns_zero(self, db, settings, forecast):
         executor = self._make_executor()
-        with patch("wedge.pipeline.fetch_ensemble", return_value=None):
+        with patch("wedge.pipeline.fetch_ensemble_auto", return_value=None):
             orders = await self._call(db, settings, forecast, executor)
         assert orders == 0
         executor.place_order.assert_not_called()
@@ -185,7 +185,7 @@ class TestProcessCity:
         executor = self._make_executor()
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=None),
         ):
             orders = await self._call(db, settings, forecast, executor)
@@ -196,7 +196,7 @@ class TestProcessCity:
         executor = self._make_executor()
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]),
             patch("wedge.pipeline.evaluate_ladder", return_value=[position]),
@@ -211,7 +211,7 @@ class TestProcessCity:
         executor = self._make_executor()
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline._generate_synthetic_markets", return_value=[]),
         ):
@@ -223,7 +223,7 @@ class TestProcessCity:
         executor = self._make_executor()
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline._generate_synthetic_markets", return_value=[market_bucket]),
             patch("wedge.pipeline.detect_edges", return_value=[]),
@@ -236,7 +236,7 @@ class TestProcessCity:
         executor = self._make_executor(success=False)
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]),
             patch("wedge.pipeline.evaluate_ladder", return_value=[position]),
@@ -256,7 +256,7 @@ class TestProcessCity:
         poly_client = MagicMock()
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline.scan_weather_markets", new_callable=AsyncMock, return_value=[MagicMock()]),
             patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]),
@@ -276,7 +276,7 @@ class TestProcessCity:
         executor = self._make_executor()
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
         ):
             orders = await self._call(db, settings, forecast, executor, poly_client=None)
@@ -288,7 +288,7 @@ class TestProcessCity:
         raw = {"some": "data"}
         await db.insert_run("testrun", datetime.now(UTC).isoformat())
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline._generate_synthetic_markets", return_value=[]),
         ):
@@ -303,7 +303,7 @@ class TestProcessCity:
         pos2 = position.model_copy(update={"strategy": "tail"})
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]),
             patch("wedge.pipeline.evaluate_ladder", return_value=[position]),
@@ -465,7 +465,7 @@ class TestRunSingleScan:
     async def test_invalid_city_returns_early(self, settings):
         from wedge.pipeline import run_single_scan
 
-        with patch("wedge.pipeline.fetch_ensemble") as mock_fetch:
+        with patch("wedge.pipeline.fetch_ensemble_auto") as mock_fetch:
             await run_single_scan(settings, "NONEXISTENT")
         mock_fetch.assert_not_called()
 
@@ -474,7 +474,7 @@ class TestRunSingleScan:
         from wedge.pipeline import run_single_scan
 
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=None),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=None),
             patch("wedge.pipeline.parse_distribution") as mock_parse,
         ):
             await run_single_scan(settings, "NYC")
@@ -486,7 +486,7 @@ class TestRunSingleScan:
 
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=None),
         ):
             await run_single_scan(settings, "NYC")
@@ -497,7 +497,7 @@ class TestRunSingleScan:
 
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
         ):
             # Should complete without exception
@@ -509,7 +509,7 @@ class TestRunSingleScan:
 
         raw = {"some": "data"}
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
         ):
             await run_single_scan(settings, "nyc")
@@ -527,7 +527,7 @@ class TestRunSingleScan:
             return forecast
 
         with (
-            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.fetch_ensemble_auto", return_value=raw),
             patch("wedge.pipeline.parse_distribution", side_effect=capture_parse),
         ):
             await run_single_scan(settings, "NYC")

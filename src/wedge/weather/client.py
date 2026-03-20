@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from datetime import date
+from typing import TYPE_CHECKING
+
 import httpx
 
 from wedge.config import CityConfig
 from wedge.log import get_logger
+
+if TYPE_CHECKING:
+    from wedge.config import Settings
 
 log = get_logger("weather.client")
 
@@ -78,3 +84,24 @@ async def fetch_actual_temperature(
                 await asyncio.sleep(wait)
     log.error("archive_api_failed", city=city.name, date=target_date)
     return None
+
+
+async def fetch_ensemble_auto(
+    client: httpx.AsyncClient,
+    city: CityConfig,
+    settings: "Settings",
+    target_date: date | None = None,
+) -> dict | None:
+    """Fetch ensemble data from the configured weather source.
+
+    Routes to NOAA GEFS or Open-Meteo based on settings.weather_source.
+    target_date is only used for NOAA; Open-Meteo returns a multi-day forecast.
+    """
+    if settings.weather_source == "noaa":
+        if target_date is None:
+            import datetime as _dt
+            target_date = _dt.date.today()
+        from wedge.weather.noaa_client import fetch_ensemble_noaa
+        return await fetch_ensemble_noaa(client, city, target_date)
+    else:
+        return await fetch_ensemble(client, city)
