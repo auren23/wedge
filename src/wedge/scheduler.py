@@ -128,15 +128,13 @@ async def run_scheduler(settings: Settings) -> None:
         id="settlement_daily",
     )
 
-    for offset in settings.offsets_utc:
-        hour, minute = offset.split(":")
-        scheduler.add_job(
-            _guarded_pipeline,
-            trigger=CronTrigger(hour=int(hour), minute=int(minute), timezone=_UTC),
-            coalesce=True,
-            misfire_grace_time=600,
-            id=f"pipeline_{offset}",
-        )
+    scheduler.add_job(
+        _guarded_pipeline,
+        trigger=IntervalTrigger(minutes=1),
+        coalesce=True,
+        misfire_grace_time=60,
+        id="pipeline_interval",
+    )
 
     # Market price exit check (every N seconds, independent of weather pipeline)
     async def _run_market_exit_check() -> None:
