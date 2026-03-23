@@ -82,6 +82,30 @@ CREATE TABLE IF NOT EXISTS exit_tiers (
     pnl REAL NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS market_discoveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    city TEXT NOT NULL,
+    date TEXT NOT NULL,
+    temp_f INTEGER NOT NULL,
+    temp_unit TEXT NOT NULL DEFAULT 'F',
+    token_id TEXT,
+    contract_type TEXT NOT NULL,
+    market_price REAL NOT NULL,
+    implied_prob REAL NOT NULL,
+    volume_24h REAL NOT NULL,
+    open_interest REAL NOT NULL,
+    bid_price REAL,
+    ask_price REAL,
+    spread REAL,
+    liquidity_score REAL NOT NULL DEFAULT 0,
+    selected_for_watchlist INTEGER NOT NULL DEFAULT 0,
+    watchlist_rank INTEGER,
+    selection_reason TEXT,
+    filter_reason TEXT,
+    discovered_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_exit_tiers_pos ON exit_tiers(city, date, temp_f);
 
 CREATE INDEX IF NOT EXISTS idx_trades_run ON trades(run_id);
@@ -89,6 +113,8 @@ CREATE INDEX IF NOT EXISTS idx_trades_city_date ON trades(city, date);
 CREATE INDEX IF NOT EXISTS idx_forecasts_city_date ON forecasts(city, date);
 CREATE INDEX IF NOT EXISTS idx_trades_settled ON trades(settled);
 CREATE INDEX IF NOT EXISTS idx_cycle_markers_status ON cycle_markers(status);
+CREATE INDEX IF NOT EXISTS idx_market_discoveries_city_date ON market_discoveries(city, date);
+CREATE INDEX IF NOT EXISTS idx_market_discoveries_watchlist ON market_discoveries(selected_for_watchlist, date);
 """
 
 
@@ -101,7 +127,7 @@ class Database:
         self._conn = await aiosqlite.connect(self._path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(_SCHEMA)
-        # Migration: add temp_unit column if not exists (for backward compatibility)
+        # Migration: add columns if not exists (for backward compatibility)
         for migration_sql in [
             "ALTER TABLE trades ADD COLUMN temp_unit TEXT NOT NULL DEFAULT 'F'",
             "ALTER TABLE trades ADD COLUMN exit_price REAL",
@@ -109,6 +135,11 @@ class Database:
             "ALTER TABLE trades ADD COLUMN settled_at TEXT",
             "ALTER TABLE trades ADD COLUMN peak_p_model REAL",
             "ALTER TABLE trades ADD COLUMN remaining_size REAL",
+            "ALTER TABLE market_discoveries ADD COLUMN bid_price REAL",
+            "ALTER TABLE market_discoveries ADD COLUMN ask_price REAL",
+            "ALTER TABLE market_discoveries ADD COLUMN spread REAL",
+            "ALTER TABLE market_discoveries ADD COLUMN selection_reason TEXT",
+            "ALTER TABLE market_discoveries ADD COLUMN filter_reason TEXT",
         ]:
             try:
                 await self._conn.execute(migration_sql)
@@ -251,6 +282,102 @@ class Database:
             rows,
         )
         await self.conn.commit()
+
+    async def replace_market_discoveries(
+        self,
+        *,
+        run_id: str,
+        city: str,
+        target_date: str,
+        buckets: list,
+        discovered_at: str,
+    ) -> None:
+        await self.conn.execute(
+            "DELETE FROM market_discoveries WHERE city=? AND date=?",
+            (city, target_date),
+        )
+        rows = [
+            (
+                run_id,
+                city,
+                target_date,
+                bucket.temp_value,
+                bucket.temp_unit,
+                bucket.token_id,
+                bucket.contract_type,
+                bucket.market_price,
+                bucket.implied_prob,
+                bucket.volume_24h,
+                bucket.open_interest,
+                bucket.bid_price,
+                bucket.ask_price,
+                bucket.spread,
+                bucket.liquidity_score,
+                1 if bucket.selected_for_watchlist else 0,
+                bucket.watchlist_rank,
+                bucket.selection_reason,
+                bucket.filter_reason,
+                discovered_at,
+            )
+            for bucket in buckets
+        ]
+        if rows:
+            await self.conn.executemany(
+                """INSERT INTO market_discoveries (
+                   run_id, city, date, temp_f, temp_unit, token_id, contract_type,
+                   market_price, implied_prob, volume_24h, open_interest, bid_price, ask_price, spread,
+                   liquidity_score, selected_for_watchlist, watchlist_rank, selection_reason, filter_reason, discovered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+        await self.conn.commit()
+
+    async def get_market_discoveries(self, city: str, target_date: str) -> list[dict]:
+        cursor = await self.conn.execute(
+            """SELECT city, date, temp_f, temp_unit, token_id, contract_type, market_price, implied_prob,
+                      volume_24h, open_interest, bid_price, ask_price, spread,
+                      liquidity_score, selected_for_watchlist, watchlist_rank, selection_reason, filter_reason, discovered_at
+               FROM market_discoveries
+               WHERE city=? AND date=?
+               ORDER BY selected_for_watchlist DESC,
+                        CASE WHEN watchlist_rank IS NULL THEN 999999 ELSE watchlist_rank END,
+                        liquidity_score DESC, temp_f""",
+            (city, target_date),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def list_market_discoveries(
+        self,
+        *,
+        city: str | None = None,
+        target_date: str | None = None,
+        include_all: bool = False,
+    ) -> list[dict]:
+        where = []
+        params: list[str] = []
+        if city is not None:
+            where.append("city=?")
+            params.append(city)
+        if target_date is not None:
+            where.append("date=?")
+            params.append(target_date)
+        if not include_all:
+            where.append("selected_for_watchlist=1")
+
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        cursor = await self.conn.execute(
+            f"""SELECT city, date, temp_f, temp_unit, token_id, contract_type, market_price, implied_prob,
+                      volume_24h, open_interest, bid_price, ask_price, spread,
+                      liquidity_score, selected_for_watchlist, watchlist_rank, selection_reason, filter_reason, discovered_at
+               FROM market_discoveries
+               {where_sql}
+               ORDER BY date DESC, city ASC,
+                        selected_for_watchlist DESC,
+                        CASE WHEN watchlist_rank IS NULL THEN 999999 ELSE watchlist_rank END,
+                        liquidity_score DESC, temp_f""",
+            params,
+        )
+        return [dict(row) for row in await cursor.fetchall()]
 
     async def claim_cycle_marker(
         self,

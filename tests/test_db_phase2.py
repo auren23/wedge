@@ -103,3 +103,79 @@ async def test_insert_forecasts_batch_persists_all_rows(tmp_path):
         ]
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_replace_market_discoveries_persists_watchlist_state(tmp_path):
+    from datetime import date
+    from wedge.market.models import MarketBucket
+    db = Database(str(tmp_path / "phase2.db"))
+    await db.connect()
+    try:
+        await db.replace_market_discoveries(
+            run_id="run-watch",
+            city="NYC",
+            target_date="2026-03-20",
+            buckets=[
+                MarketBucket(
+                    token_id="tok-75",
+                    city="NYC",
+                    date=date(2026, 3, 20),
+                    temp_value=75,
+                    temp_unit="F",
+                    market_price=0.41,
+                    implied_prob=0.41,
+                    volume_24h=9_000.0,
+                    open_interest=3_000.0,
+                    contract_type="daily",
+                    bid_price=0.40,
+                    ask_price=0.42,
+                    spread=0.02,
+                    liquidity_score=12.5,
+                    selected_for_watchlist=True,
+                    watchlist_rank=1,
+                    selection_reason="watchlist_top_k",
+                    filter_reason=None,
+                ),
+                MarketBucket(
+                    token_id="tok-74",
+                    city="NYC",
+                    date=date(2026, 3, 20),
+                    temp_value=74,
+                    temp_unit="F",
+                    market_price=0.38,
+                    implied_prob=0.38,
+                    volume_24h=5_000.0,
+                    open_interest=1_500.0,
+                    contract_type="daily",
+                    bid_price=0.31,
+                    ask_price=0.45,
+                    spread=0.14,
+                    liquidity_score=8.5,
+                    selected_for_watchlist=False,
+                    watchlist_rank=None,
+                    selection_reason="ranked_out",
+                    filter_reason=None,
+                ),
+            ],
+            discovered_at=datetime.now(UTC).isoformat(),
+        )
+
+        discoveries = await db.get_market_discoveries("NYC", "2026-03-20")
+
+        assert len(discoveries) == 2
+        assert discoveries[0]["temp_f"] == 75
+        assert discoveries[0]["selected_for_watchlist"] == 1
+        assert discoveries[0]["watchlist_rank"] == 1
+        assert discoveries[1]["temp_f"] == 74
+        assert discoveries[1]["selected_for_watchlist"] == 0
+        assert discoveries[1]["watchlist_rank"] is None
+        assert discoveries[0]["bid_price"] == 0.40
+        assert discoveries[0]["ask_price"] == 0.42
+        assert discoveries[0]["spread"] == 0.02
+        assert discoveries[1]["spread"] == 0.14
+        assert discoveries[0]["selection_reason"] == "watchlist_top_k"
+        assert discoveries[0]["filter_reason"] is None
+        assert discoveries[1]["selection_reason"] == "ranked_out"
+    finally:
+        await db.close()

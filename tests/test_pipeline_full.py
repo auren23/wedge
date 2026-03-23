@@ -254,7 +254,7 @@ class TestProcessCity:
         assert orders == 0
 
     @pytest.mark.asyncio
-    async def test_live_mode_with_poly_client(self, db, forecast, position):
+    async def test_live_mode_with_poly_client(self, db, forecast, market_bucket, position):
         settings = Settings(
             mode="live",
             bankroll=1000.0,
@@ -274,9 +274,9 @@ class TestProcessCity:
             patch("wedge.pipeline.fetch_ensemble", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch(
-                "wedge.pipeline.scan_weather_markets",
+                "wedge.pipeline.discover_weather_markets",
                 new_callable=AsyncMock,
-                return_value=[MagicMock()],
+                return_value=([market_bucket], []),
             ),
             patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]),
             patch("wedge.pipeline.evaluate_ladder", return_value=[position]),
@@ -287,11 +287,13 @@ class TestProcessCity:
         assert orders == 1
 
     @pytest.mark.asyncio
-    async def test_live_mode_uses_configured_market_liquidity_params(self, db, forecast, position):
+    async def test_live_mode_uses_configured_market_liquidity_params(self, db, forecast, market_bucket, position):
         settings = Settings(
             mode="live",
             bankroll=1000.0,
             market_min_volume=2345.0,
+            market_min_open_interest=3456.0,
+            market_max_spread=0.07,
             slippage_bet_size=12.5,
             cities=[
                 CityConfig(
@@ -310,9 +312,9 @@ class TestProcessCity:
             patch("wedge.pipeline.fetch_ensemble", return_value=raw),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch(
-                "wedge.pipeline.scan_weather_markets",
+                "wedge.pipeline.discover_weather_markets",
                 new_callable=AsyncMock,
-                return_value=[MagicMock()],
+                return_value=([market_bucket], []),
             ) as mock_scan,
             patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]) as mock_detect,
             patch("wedge.pipeline.evaluate_ladder", return_value=[position]),
@@ -327,6 +329,8 @@ class TestProcessCity:
             "NYC",
             date(2026, 3, 20),
             min_volume=2345.0,
+            min_open_interest=3456.0,
+            max_spread=0.07,
         )
         assert mock_detect.call_count == 1
         assert mock_detect.call_args.kwargs["slippage_bet_size"] == 12.5
@@ -380,6 +384,139 @@ class TestProcessCity:
             orders = await self._call(db, settings, forecast, executor)
         assert orders == 2
 
+
+    @pytest.mark.asyncio
+    async def test_live_mode_limits_edge_detection_to_watchlist(self, db, forecast):
+        settings = Settings(
+            mode="live",
+            bankroll=1000.0,
+            market_watchlist_size=1,
+            cities=[CityConfig(name="NYC", lat=40.77, lon=-73.87, timezone="America/New_York")],
+        )
+        executor = self._make_executor()
+        poly_client = MagicMock()
+        raw = {"some": "data"}
+        all_markets = [
+            MarketBucket(
+                token_id="tok-74",
+                city="NYC",
+                date=date(2026, 3, 20),
+                temp_value=74,
+                temp_unit="F",
+                market_price=0.21,
+                implied_prob=0.21,
+                volume_24h=4_000.0,
+                open_interest=800.0,
+                contract_type="daily",
+            ),
+            MarketBucket(
+                token_id="tok-75",
+                city="NYC",
+                date=date(2026, 3, 20),
+                temp_value=75,
+                temp_unit="F",
+                market_price=0.24,
+                implied_prob=0.24,
+                volume_24h=12_000.0,
+                open_interest=4_000.0,
+                contract_type="daily",
+            ),
+        ]
+
+        with (
+            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.parse_distribution", return_value=forecast),
+            patch(
+                "wedge.pipeline.discover_weather_markets",
+                new_callable=AsyncMock,
+                return_value=(all_markets, []),
+            ),
+            patch("wedge.pipeline.detect_edges", return_value=[] ) as mock_detect,
+        ):
+            orders = await self._call(db, settings, forecast, executor, poly_client=poly_client)
+
+        assert orders == 0
+        ranked_markets = mock_detect.call_args.args[1]
+        assert len(ranked_markets) == 1
+        assert ranked_markets[0].temp_value == 75
+        discoveries = await db.get_market_discoveries("NYC", "2026-03-20")
+        assert len(discoveries) == 2
+        assert discoveries[0]["temp_f"] == 75
+        assert discoveries[0]["selected_for_watchlist"] == 1
+        assert discoveries[0]["selection_reason"] == "watchlist_top_k"
+        assert discoveries[1]["selected_for_watchlist"] == 0
+        assert discoveries[1]["selection_reason"] == "ranked_out"
+
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    async def test_live_mode_persists_rejected_discoveries_with_filter_reason(self, db, forecast):
+        settings = Settings(
+            mode="live",
+            bankroll=1000.0,
+            market_watchlist_size=1,
+            cities=[CityConfig(name="NYC", lat=40.77, lon=-73.87, timezone="America/New_York")],
+        )
+        executor = self._make_executor()
+        poly_client = MagicMock()
+        raw = {"some": "data"}
+        accepted_market = MarketBucket(
+            token_id="tok-75",
+            city="NYC",
+            date=date(2026, 3, 20),
+            temp_value=75,
+            temp_unit="F",
+            market_price=0.24,
+            implied_prob=0.24,
+            volume_24h=12_000.0,
+            open_interest=4_000.0,
+            contract_type="daily",
+        )
+        rejected_market = MarketBucket(
+            token_id="tok-74",
+            city="NYC",
+            date=date(2026, 3, 20),
+            temp_value=74,
+            temp_unit="F",
+            market_price=0.21,
+            implied_prob=0.21,
+            volume_24h=500.0,
+            open_interest=200.0,
+            contract_type="daily",
+            filter_reason="low_volume",
+        )
+
+        with (
+            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.parse_distribution", return_value=forecast),
+            patch(
+                "wedge.pipeline.discover_weather_markets",
+                new_callable=AsyncMock,
+                return_value=([accepted_market], [rejected_market]),
+            ),
+            patch("wedge.pipeline.detect_edges", return_value=[]),
+        ):
+            orders = await self._call(db, settings, forecast, executor, poly_client=poly_client)
+
+        assert orders == 0
+        discoveries = await db.get_market_discoveries("NYC", "2026-03-20")
+        assert len(discoveries) == 2
+        assert discoveries[0]["selection_reason"] == "watchlist_top_k"
+        assert discoveries[1]["filter_reason"] == "low_volume"
+
+
+    async def test_dry_run_without_poly_client_does_not_write_market_discoveries(self, db, settings, forecast):
+        executor = self._make_executor()
+        raw = {"some": "data"}
+        with (
+            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.parse_distribution", return_value=forecast),
+            patch("wedge.pipeline._generate_synthetic_markets", return_value=[]),
+        ):
+            orders = await self._call(db, settings, forecast, executor, poly_client=None)
+
+        assert orders == 0
+        discoveries = await db.get_market_discoveries("NYC", "2026-03-20")
+        assert discoveries == []
 
 # ── run_pipeline ───────────────────────────────────────────────────────────────
 

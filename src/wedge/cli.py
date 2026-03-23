@@ -72,6 +72,34 @@ def stats(
 
 
 @app.command()
+def watchlist(
+    city: str | None = typer.Option(None, "--city", help="Filter by city"),
+    target_date: str | None = typer.Option(None, "--date", help="Filter by ISO date YYYY-MM-DD"),
+    include_all: bool = typer.Option(
+        False,
+        "--all",
+        help="Include non-watchlist market discoveries as well",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text table"),
+) -> None:
+    """Show persisted market watchlist/discovery rows."""
+    settings = Settings.load()
+    setup_logging()
+
+    from wedge.monitoring.watchlist import show_watchlist
+
+    asyncio.run(
+        show_watchlist(
+            settings,
+            city=city,
+            target_date=target_date,
+            include_all=include_all,
+            as_json=as_json,
+        )
+    )
+
+
+@app.command()
 def backtest(
     days: int = typer.Option(30, "--days", "-d", help="Number of days to backtest"),
 ) -> None:

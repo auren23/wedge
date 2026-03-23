@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     ladder_edge: float = 0.06
     ladder_alloc: float = 0.95
     market_min_volume: float = 2000.0  # Minimum 24h volume for market inclusion
+    market_min_open_interest: float = 1000.0  # Minimum open interest for market inclusion
+    market_max_spread: float = 0.10  # Optional max bid/ask spread; ignored when spread unavailable
+    market_watchlist_size: int = 5  # Limit entry evaluation to top-K liquid buckets per scan
     slippage_bet_size: float = 50.0  # Reference bet size for EV slippage estimation
 
     # Fees and execution

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import date, datetime, timedelta
 
@@ -21,7 +22,7 @@ _MONTH_PATTERN = re.compile(
     r"month(?:ly)?|in\s+(?:january|february|march|april|may|june|july|august|"
     r"september|october|november|december)",
     re.IGNORECASE,
- )
+)
 
 _MONTH_MAP = {
     "january": 1,
@@ -61,6 +62,12 @@ _CITY_TO_SLUG = {
 _MIN_VOLUME_24H = 2000.0  # Minimum $2K daily volume
 _MIN_OPEN_INTEREST = 1000.0  # Minimum $1K open interest
 
+_CONTRACT_TYPE_BONUS = {
+    "daily": 0.30,
+    "weekly": 0.15,
+    "monthly": 0.05,
+}
+
 
 def _detect_contract_type(question: str) -> str:
     """Detect contract type from question text."""
@@ -96,16 +103,52 @@ def _extract_open_interest(market: dict) -> float:
     return 0.0
 
 
+def _extract_yes_bid_ask(market: dict, price: float) -> tuple[float | None, float | None, float | None]:
+    """Extract yes-side bid/ask spread when available from Gamma market payloads."""
+    bid = None
+    ask = None
+
+    for bid_key in ["bestBid", "best_bid", "bid"]:
+        val = market.get(bid_key)
+        if val is not None:
+            try:
+                bid = float(val)
+                break
+            except (ValueError, TypeError):
+                pass
+
+    for ask_key in ["bestAsk", "best_ask", "ask"]:
+        val = market.get(ask_key)
+        if val is not None:
+            try:
+                ask = float(val)
+                break
+            except (ValueError, TypeError):
+                pass
+
+    if bid is None and ask is None:
+        return None, None, None
+    if bid is None:
+        bid = price
+    if ask is None:
+        ask = price
+    spread = ask - bid
+    if bid < 0 or ask < 0 or bid > 1 or ask > 1 or spread < 0:
+        return None, None, None
+    return bid, ask, spread
+
+
+def _compute_liquidity_score(bucket: MarketBucket) -> float:
+    """Score buckets by tradable liquidity within the weather-only universe."""
+    volume_score = math.log10(bucket.volume_24h + 1.0)
+    oi_score = math.log10(bucket.open_interest + 1.0)
+    contract_bonus = _CONTRACT_TYPE_BONUS.get(bucket.contract_type, 0.0)
+    spread_penalty = (bucket.spread or 0.0) * 4.0
+    return round((volume_score * 0.7) + (oi_score * 0.3) + contract_bonus - spread_penalty, 6)
+
+
 def _parse_json_field(value: str | list | dict | None, field_name: str = "") -> list | dict | None:
-    """Parse a JSON field that may be string or already parsed.
-
-    Args:
-        value: Field value (may be JSON string or already parsed)
-        field_name: Field name for logging
-
-    Returns:
-        Parsed value (list or dict) or None if parsing fails
-    """
+    """Parse a JSON field that may be string or already parsed."""
     if value is None:
         return None
 
@@ -122,58 +165,71 @@ def _parse_json_field(value: str | list | dict | None, field_name: str = "") -> 
     return None
 
 
-async def scan_weather_markets(
+def rank_market_buckets(
+    buckets: list[MarketBucket],
+    *,
+    watchlist_size: int,
+    rejected_buckets: list[MarketBucket] | None = None,
+) -> list[MarketBucket]:
+    """Rank buckets by liquidity and mark top-K as watchlist candidates."""
+    ranked = sorted(
+        (
+            bucket.model_copy(update={"liquidity_score": _compute_liquidity_score(bucket)})
+            for bucket in buckets
+        ),
+        key=lambda bucket: (bucket.liquidity_score, bucket.volume_24h, bucket.open_interest),
+        reverse=True,
+    )
+
+    for idx, bucket in enumerate(ranked, start=1):
+        selected = idx <= max(watchlist_size, 0)
+        bucket.selected_for_watchlist = selected
+        bucket.watchlist_rank = idx if selected else None
+        bucket.selection_reason = "watchlist_top_k" if selected else "ranked_out"
+        bucket.filter_reason = None
+
+    if rejected_buckets is not None:
+        for bucket in rejected_buckets:
+            bucket.selected_for_watchlist = False
+            bucket.watchlist_rank = None
+            bucket.selection_reason = None
+
+    return ranked
+
+
+async def discover_weather_markets(
     client: PolymarketClient,
     city: str,
     target_date: date,
     *,
     min_volume: float = _MIN_VOLUME_24H,
+    min_open_interest: float = _MIN_OPEN_INTEREST,
+    max_spread: float | None = None,
     include_weekly: bool = True,
     include_monthly: bool = True,
-) -> list[MarketBucket]:
-    """Scan Polymarket for weather temperature contracts matching city and date.
-
-    Supports daily, weekly, and monthly contracts.
-    Filters out low-liquidity markets to avoid slippage.
-
-    Args:
-        client: Polymarket API client
-        city: City name (e.g., "NYC", "London")
-        target_date: Target date for daily contracts, or date within week/month
-        min_volume: Minimum 24h volume in USD (default $2K)
-        include_weekly: Include weekly contracts (default True)
-        include_monthly: Include monthly contracts (default True)
-
-    Returns:
-        List of market buckets passing liquidity filters
-    """
+) -> tuple[list[MarketBucket], list[MarketBucket]]:
+    """Return accepted and rejected weather markets with reasons."""
     city_slug = _CITY_TO_SLUG.get(city)
     if not city_slug:
         log.warning("unsupported_city", city=city)
-        return []
+        return [], []
 
-    # Build slugs for different contract types
     month_name = target_date.strftime("%B").lower()
     day = target_date.day
     year = target_date.year
 
     slugs = []
-
-    # Daily contract slug
     slugs.append(f"highest-temperature-in-{city_slug}-on-{month_name}-{day}-{year}")
 
-    # Weekly contract: find week containing target_date
     if include_weekly:
-        week_start = target_date - timedelta(days=target_date.weekday())  # Monday
+        week_start = target_date - timedelta(days=target_date.weekday())
         slugs.append(
             f"highest-temperature-in-{city_slug}-week-of-{week_start.strftime('%B').lower()}-{week_start.day}-{year}"
         )
 
-    # Monthly contract
     if include_monthly:
         slugs.append(f"highest-temperature-in-{city_slug}-in-{month_name}-{year}")
 
-    # Fetch all events
     events = []
     for slug in slugs:
         if hasattr(client, "get_event_by_slug"):
@@ -182,20 +238,20 @@ async def scan_weather_markets(
                 events.append(event)
         else:
             log.warning("client_missing_get_event_by_slug", city=city)
-            return []
+            return [], []
 
     if not events:
         log.info("scan_complete", city=city, date=str(target_date), buckets_found=0)
-        return []
+        return [], []
 
-    buckets: list[MarketBucket] = []
+    accepted: list[MarketBucket] = []
+    rejected: list[MarketBucket] = []
 
     for event in events:
         for market in event.get("markets", []):
             try:
                 question = market.get("question", "").lower()
 
-                # Extract temperature and unit directly from market question
                 temp_match = _TEMP_PATTERN.search(question)
                 if not temp_match:
                     continue
@@ -207,24 +263,10 @@ async def scan_weather_markets(
                     log.warning("invalid_temp_format", question=question)
                     continue
 
-                # Detect contract type
                 contract_type = _detect_contract_type(question)
-
-                # Extract liquidity metrics
                 volume_24h = _extract_volume(market)
                 open_interest = _extract_open_interest(market)
 
-                # Filter low-liquidity markets
-                if volume_24h < min_volume:
-                    log.debug(
-                        "low_volume_filtered",
-                        city=city,
-                        question=question[:50],
-                        volume_24h=volume_24h,
-                    )
-                    continue
-
-                # Parse outcomes and prices using unified JSON parser
                 outcomes = _parse_json_field(market.get("outcomes"), "outcomes")
                 if outcomes is None:
                     outcomes = market.get("outcomes", [])
@@ -236,7 +278,6 @@ async def scan_weather_markets(
                 if prices is None:
                     prices = market.get("outcomePrices")
 
-                # Find "Yes" outcome
                 yes_index = None
                 for idx, outcome in enumerate(outcomes):
                     if isinstance(outcome, str):
@@ -251,7 +292,6 @@ async def scan_weather_markets(
                 if yes_index is None:
                     continue
 
-                # Get price
                 if prices:
                     if yes_index >= len(prices):
                         continue
@@ -273,7 +313,6 @@ async def scan_weather_markets(
                 if not (0 < price < 1):
                     continue
 
-                # Get token_id using unified JSON parser
                 clob_token_ids = _parse_json_field(market.get("clobTokenIds"), "clobTokenIds")
                 if clob_token_ids is None:
                     clob_token_ids = market.get("clobTokenIds", [])
@@ -282,20 +321,57 @@ async def scan_weather_markets(
                 if clob_token_ids and yes_index < len(clob_token_ids):
                     token_id = clob_token_ids[yes_index]
 
-                buckets.append(
-                    MarketBucket(
-                        token_id=token_id,
-                        city=city,
-                        date=target_date,
-                        temp_value=temp_value,
-                        temp_unit=temp_unit,
-                        market_price=price,
-                        implied_prob=price,
-                        volume_24h=volume_24h,
-                        open_interest=open_interest,
-                        contract_type=contract_type,
-                    )
+                bid_price, ask_price, spread = _extract_yes_bid_ask(market, price)
+                bucket = MarketBucket(
+                    token_id=token_id,
+                    city=city,
+                    date=target_date,
+                    temp_value=temp_value,
+                    temp_unit=temp_unit,
+                    market_price=price,
+                    implied_prob=price,
+                    volume_24h=volume_24h,
+                    open_interest=open_interest,
+                    bid_price=bid_price,
+                    ask_price=ask_price,
+                    spread=spread,
+                    contract_type=contract_type,
                 )
+                bucket.liquidity_score = _compute_liquidity_score(bucket)
+
+                if volume_24h < min_volume:
+                    bucket.filter_reason = "low_volume"
+                    rejected.append(bucket)
+                    log.debug(
+                        "low_volume_filtered",
+                        city=city,
+                        question=question[:50],
+                        volume_24h=volume_24h,
+                    )
+                    continue
+                if open_interest < min_open_interest:
+                    bucket.filter_reason = "low_open_interest"
+                    rejected.append(bucket)
+                    log.debug(
+                        "low_open_interest_filtered",
+                        city=city,
+                        question=question[:50],
+                        open_interest=open_interest,
+                    )
+                    continue
+                if max_spread is not None and spread is not None and spread > max_spread:
+                    bucket.filter_reason = "wide_spread"
+                    rejected.append(bucket)
+                    log.debug(
+                        "wide_spread_filtered",
+                        city=city,
+                        question=question[:50],
+                        spread=spread,
+                        max_spread=max_spread,
+                    )
+                    continue
+
+                accepted.append(bucket)
             except Exception as e:
                 log.warning(
                     "market_parse_error",
@@ -308,17 +384,42 @@ async def scan_weather_markets(
         "scan_complete",
         city=city,
         date=str(target_date),
-        buckets_found=len(buckets),
-        daily_contracts=len([b for b in buckets if b.contract_type == "daily"]),
-        weekly_contracts=len([b for b in buckets if b.contract_type == "weekly"]),
-        monthly_contracts=len([b for b in buckets if b.contract_type == "monthly"]),
+        buckets_found=len(accepted),
+        rejected_count=len(rejected),
+        daily_contracts=len([b for b in accepted if b.contract_type == "daily"]),
+        weekly_contracts=len([b for b in accepted if b.contract_type == "weekly"]),
+        monthly_contracts=len([b for b in accepted if b.contract_type == "monthly"]),
     )
-    return buckets
+    return accepted, rejected
+
+
+async def scan_weather_markets(
+    client: PolymarketClient,
+    city: str,
+    target_date: date,
+    *,
+    min_volume: float = _MIN_VOLUME_24H,
+    min_open_interest: float = _MIN_OPEN_INTEREST,
+    max_spread: float | None = None,
+    include_weekly: bool = True,
+    include_monthly: bool = True,
+) -> list[MarketBucket]:
+    """Compatibility wrapper returning only accepted markets."""
+    accepted, _ = await discover_weather_markets(
+        client,
+        city,
+        target_date,
+        min_volume=min_volume,
+        min_open_interest=min_open_interest,
+        max_spread=max_spread,
+        include_weekly=include_weekly,
+        include_monthly=include_monthly,
+    )
+    return accepted
 
 
 def _extract_market_date(market: dict, year: int) -> date | None:
     """Try to extract date from market question or structured fields."""
-    # Try structured field first
     end_date = market.get("end_date_iso") or market.get("end_date")
     if end_date:
         try:
@@ -326,7 +427,6 @@ def _extract_market_date(market: dict, year: int) -> date | None:
         except (ValueError, AttributeError):
             pass
 
-    # Fall back to parsing question text
     question = market.get("question", "")
     match = _DATE_PATTERN.search(question)
     if match:

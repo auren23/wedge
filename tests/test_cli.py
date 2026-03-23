@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -184,3 +185,149 @@ class TestHelpText:
         result = runner.invoke(app, ["stats", "--help"])
         assert result.exit_code == 0
         assert "--days" in result.output or "-d" in result.output
+
+
+class TestWatchlistCommand:
+    def test_watchlist_default_exits_ok(self):
+        with (
+            patch("wedge.cli.asyncio.run", side_effect=_close_coro) as mock_run,
+            patch("wedge.cli.setup_logging"),
+        ):
+            result = runner.invoke(app, ["watchlist"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_watchlist_passes_filters(self):
+        with (
+            patch("wedge.cli.asyncio.run", side_effect=_close_coro) as mock_run,
+            patch("wedge.cli.setup_logging"),
+        ):
+            result = runner.invoke(
+                app,
+                ["watchlist", "--city", "NYC", "--date", "2026-03-20", "--all"],
+            )
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_watchlist_help(self):
+        result = runner.invoke(app, ["watchlist", "--help"])
+        assert result.exit_code == 0
+        assert "--city" in result.output
+        assert "--date" in result.output
+        assert "--all" in result.output
+        assert "--json" in result.output
+
+    def test_watchlist_outputs_rows(self, tmp_path, monkeypatch):
+        from wedge.config import Settings
+        from wedge.db import Database
+
+        db_path = tmp_path / "watchlist.db"
+
+        async def seed() -> None:
+            db = Database(str(db_path))
+            await db.connect()
+            try:
+                await db.insert_run("run-watch", datetime.now(UTC).isoformat())
+                await db.replace_market_discoveries(
+                    run_id="run-watch",
+                    city="NYC",
+                    target_date="2026-03-20",
+                    buckets=[
+                        __import__("wedge.market.models", fromlist=["MarketBucket"]).MarketBucket(
+                            token_id="tok-75",
+                            city="NYC",
+                            date=date(2026, 3, 20),
+                            temp_value=75,
+                            temp_unit="F",
+                            market_price=0.41,
+                            implied_prob=0.41,
+                            volume_24h=9000.0,
+                            open_interest=3000.0,
+                            bid_price=0.40,
+                            ask_price=0.42,
+                            spread=0.02,
+                            contract_type="daily",
+                            liquidity_score=12.5,
+                            selected_for_watchlist=True,
+                            watchlist_rank=1,
+                            selection_reason="watchlist_top_k",
+                            filter_reason=None,
+                        ),
+                        __import__("wedge.market.models", fromlist=["MarketBucket"]).MarketBucket(
+                            token_id="tok-74",
+                            city="NYC",
+                            date=date(2026, 3, 20),
+                            temp_value=74,
+                            temp_unit="F",
+                            market_price=0.20,
+                            implied_prob=0.20,
+                            volume_24h=500.0,
+                            open_interest=200.0,
+                            contract_type="daily",
+                            filter_reason="low_volume",
+                        )
+                    ],
+                    discovered_at=datetime.now(UTC).isoformat(),
+                )
+            finally:
+                await db.close()
+
+        import asyncio as _asyncio
+        _asyncio.run(seed())
+
+        monkeypatch.setattr("wedge.cli.Settings.load", lambda **_: Settings(db_path=str(db_path)))
+        result = runner.invoke(app, ["watchlist", "--city", "NYC", "--date", "2026-03-20", "--all"] )
+
+        assert result.exit_code == 0
+        assert "tok-75" in result.output
+        assert "NYC" in result.output
+        assert "75F" in result.output
+        assert "watchlist_top_k" in result.output
+        assert "low_volume" in result.output
+    def test_watchlist_json_outputs_structured_rows(self, tmp_path, monkeypatch):
+        from wedge.config import Settings
+        from wedge.db import Database
+
+        db_path = tmp_path / "watchlist-json.db"
+
+        async def seed() -> None:
+            db = Database(str(db_path))
+            await db.connect()
+            try:
+                await db.insert_run("run-watch", datetime.now(UTC).isoformat())
+                await db.replace_market_discoveries(
+                    run_id="run-watch",
+                    city="NYC",
+                    target_date="2026-03-20",
+                    buckets=[
+                        __import__("wedge.market.models", fromlist=["MarketBucket"]).MarketBucket(
+                            token_id="tok-75",
+                            city="NYC",
+                            date=date(2026, 3, 20),
+                            temp_value=75,
+                            temp_unit="F",
+                            market_price=0.41,
+                            implied_prob=0.41,
+                            volume_24h=9000.0,
+                            open_interest=3000.0,
+                            contract_type="daily",
+                            selected_for_watchlist=True,
+                            watchlist_rank=1,
+                            selection_reason="watchlist_top_k",
+                        )
+                    ],
+                    discovered_at=datetime.now(UTC).isoformat(),
+                )
+            finally:
+                await db.close()
+
+        import asyncio as _asyncio
+        _asyncio.run(seed())
+
+        monkeypatch.setattr("wedge.cli.Settings.load", lambda **_: Settings(db_path=str(db_path)))
+        result = runner.invoke(app, ["watchlist", "--json"])
+
+        assert result.exit_code == 0
+        assert '"city": "NYC"' in result.output
+        assert '"selection_reason": "watchlist_top_k"' in result.output
+        assert '"selected_for_watchlist": true' in result.output

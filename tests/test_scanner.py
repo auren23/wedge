@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wedge.market.scanner import scan_weather_markets
+from wedge.market.models import MarketBucket
+from wedge.market.scanner import discover_weather_markets, rank_market_buckets, scan_weather_markets
 
 
 def _make_client(event: dict | None) -> AsyncMock:
@@ -25,11 +26,19 @@ def _market(
     outcomes: list[dict],
     token_ids: list[str] | None = None,
     volume_24h: float = 10000.0,
+    extra: dict | None = None,
 ) -> dict:
     """Create a market within an event."""
-    m: dict = {"question": question, "outcomes": outcomes, "volume24h": volume_24h}
+    m: dict = {
+        "question": question,
+        "outcomes": outcomes,
+        "volume24h": volume_24h,
+        "openInterest": 2000.0,
+    }
     if token_ids:
         m["clobTokenIds"] = token_ids
+    if extra:
+        m.update(extra)
     return m
 
 
@@ -257,6 +266,61 @@ class TestScanWeatherMarkets:
         assert result[0].volume_24h == 10000
 
     @pytest.mark.asyncio
+    async def test_liquidity_filter_low_open_interest(self):
+        event = _event(
+            "Highest temperature in NYC on July 4?",
+            [
+                _market(
+                    "Will the highest temperature in New York City be 75°F?",
+                    [_outcome("Yes", 0.5), _outcome("No", 0.5)],
+                    ["token_75"],
+                    extra={"openInterest": 250},
+                ),
+            ],
+        )
+
+        client = _make_client(event)
+        result = await scan_weather_markets(
+            client,
+            "NYC",
+            TARGET_DATE,
+            min_volume=2000,
+            min_open_interest=1000,
+            include_weekly=False,
+            include_monthly=False,
+        )
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_liquidity_filter_wide_spread(self):
+        event = _event(
+            "Highest temperature in NYC on July 4?",
+            [
+                _market(
+                    "Will the highest temperature in New York City be 75°F?",
+                    [_outcome("Yes", 0.5), _outcome("No", 0.5)],
+                    ["token_75"],
+                    extra={"openInterest": 2500, "bestBid": "0.30", "bestAsk": "0.55"},
+                ),
+            ],
+        )
+
+        client = _make_client(event)
+        result = await scan_weather_markets(
+            client,
+            "NYC",
+            TARGET_DATE,
+            min_volume=2000,
+            min_open_interest=1000,
+            max_spread=0.20,
+            include_weekly=False,
+            include_monthly=False,
+        )
+
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_contract_type_detection(self):
         """Test detection of daily/weekly/monthly contract types."""
         # Daily contract - use specific daily slug format
@@ -405,3 +469,159 @@ class TestScanWeatherMarkets:
         assert len(result) == 1
         assert result[0].temp_value == 11  # Market shows 11°C
         assert result[0].temp_unit == "C"
+
+
+    def test_rank_market_buckets_marks_top_watchlist(self):
+        buckets = [
+            MarketBucket(
+                token_id="tok-74",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=74,
+                temp_unit="F",
+                market_price=0.40,
+                implied_prob=0.40,
+                volume_24h=4_000.0,
+                open_interest=800.0,
+                contract_type="daily",
+            ),
+            MarketBucket(
+                token_id="tok-75",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=75,
+                temp_unit="F",
+                market_price=0.42,
+                implied_prob=0.42,
+                volume_24h=9_000.0,
+                open_interest=2_500.0,
+                contract_type="daily",
+            ),
+            MarketBucket(
+                token_id="tok-76",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=76,
+                temp_unit="F",
+                market_price=0.44,
+                implied_prob=0.44,
+                volume_24h=15_000.0,
+                open_interest=5_000.0,
+                contract_type="daily",
+            ),
+        ]
+
+        ranked = rank_market_buckets(buckets, watchlist_size=2)
+
+        assert [bucket.temp_value for bucket in ranked] == [76, 75, 74]
+        assert [bucket.watchlist_rank for bucket in ranked] == [1, 2, None]
+        assert [bucket.selected_for_watchlist for bucket in ranked] == [True, True, False]
+        assert ranked[0].liquidity_score > ranked[1].liquidity_score > ranked[2].liquidity_score
+
+    def test_rank_market_buckets_penalizes_wide_spread(self):
+        buckets = [
+            MarketBucket(
+                token_id="tok-tight",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=74,
+                temp_unit="F",
+                market_price=0.40,
+                implied_prob=0.40,
+                volume_24h=10_000.0,
+                open_interest=3_000.0,
+                contract_type="daily",
+                bid_price=0.39,
+                ask_price=0.41,
+                spread=0.02,
+            ),
+            MarketBucket(
+                token_id="tok-wide",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=75,
+                temp_unit="F",
+                market_price=0.40,
+                implied_prob=0.40,
+                volume_24h=10_000.0,
+                open_interest=3_000.0,
+                contract_type="daily",
+                bid_price=0.30,
+                ask_price=0.50,
+                spread=0.20,
+            ),
+        ]
+
+        ranked = rank_market_buckets(buckets, watchlist_size=2)
+
+        assert [bucket.temp_value for bucket in ranked] == [74, 75]
+        assert ranked[0].spread == 0.02
+        assert ranked[1].spread == 0.20
+
+    @pytest.mark.asyncio
+    async def test_discover_weather_markets_returns_rejected_with_reasons(self):
+        event = _event(
+            "Highest temperature in NYC on July 4?",
+            [
+                _market(
+                    "Will the highest temperature in New York City be 75°F?",
+                    [_outcome("Yes", 0.5), _outcome("No", 0.5)],
+                    ["token_75"],
+                    extra={"openInterest": 250},
+                ),
+                _market(
+                    "Will the highest temperature in New York City be 76°F?",
+                    [_outcome("Yes", 0.45), _outcome("No", 0.55)],
+                    ["token_76"],
+                    extra={"openInterest": 2500, "bestBid": "0.30", "bestAsk": "0.55"},
+                ),
+            ],
+        )
+
+        client = _make_client(event)
+        accepted, rejected = await discover_weather_markets(
+            client,
+            "NYC",
+            TARGET_DATE,
+            min_volume=2000,
+            min_open_interest=1000,
+            max_spread=0.20,
+            include_weekly=False,
+            include_monthly=False,
+        )
+
+        assert accepted == []
+        assert [bucket.filter_reason for bucket in rejected] == ["low_open_interest", "wide_spread"]
+
+    def test_rank_market_buckets_sets_selection_reason(self):
+        buckets = [
+            MarketBucket(
+                token_id="tok-a",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=74,
+                temp_unit="F",
+                market_price=0.40,
+                implied_prob=0.40,
+                volume_24h=10_000.0,
+                open_interest=4_000.0,
+                contract_type="daily",
+            ),
+            MarketBucket(
+                token_id="tok-b",
+                city="NYC",
+                date=TARGET_DATE,
+                temp_value=75,
+                temp_unit="F",
+                market_price=0.41,
+                implied_prob=0.41,
+                volume_24h=8_000.0,
+                open_interest=3_000.0,
+                contract_type="daily",
+            ),
+        ]
+
+        ranked = rank_market_buckets(buckets, watchlist_size=1)
+
+        assert ranked[0].selection_reason == "watchlist_top_k"
+        assert ranked[1].selection_reason == "ranked_out"

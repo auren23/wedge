@@ -14,7 +14,7 @@ from wedge.execution.models import OrderRequest
 from wedge.log import get_logger
 from wedge.market.models import MarketBucket
 from wedge.market.polymarket import PolymarketClient, PublicPolymarketClient
-from wedge.market.scanner import scan_weather_markets
+from wedge.market.scanner import discover_weather_markets, rank_market_buckets, scan_weather_markets
 from wedge.strategy.edge import _EPS, detect_edges
 from wedge.strategy.ladder import evaluate_ladder
 from wedge.strategy.portfolio import allocate
@@ -211,27 +211,45 @@ async def _process_city(
     )
 
     # 4. Scan market (prefer real market data when available)
+    discovered_at = datetime.now(UTC).isoformat()
+    candidate_markets: list[MarketBucket]
     if poly_client:
-        markets = await scan_weather_markets(
+        accepted_markets, rejected_markets = await discover_weather_markets(
             poly_client,
             city_cfg.name,
             target_date,
             min_volume=settings.market_min_volume,
+            min_open_interest=settings.market_min_open_interest,
+            max_spread=settings.market_max_spread,
         )
+        ranked_markets = rank_market_buckets(
+            accepted_markets,
+            watchlist_size=settings.market_watchlist_size,
+            rejected_buckets=rejected_markets,
+        )
+        await db.replace_market_discoveries(
+            run_id=run_id,
+            city=city_cfg.name,
+            target_date=target_date.isoformat(),
+            buckets=[*ranked_markets, *rejected_markets],
+            discovered_at=discovered_at,
+        )
+        candidate_markets = [m for m in ranked_markets if m.selected_for_watchlist]
     elif settings.mode == "dry_run":
         log.warning("no_polymarket_client_using_synthetic", city=city_cfg.name)
         markets = _generate_synthetic_markets(forecast, city_cfg.name, target_date)
+        candidate_markets = markets
     else:
-        markets = []
+        candidate_markets = []
 
-    if not markets:
+    if not candidate_markets:
         log.warning("no_markets", city=city_cfg.name)
         return 0
 
     # 5. Detect edges
     signals = detect_edges(
         forecast,
-        markets,
+        candidate_markets,
         ladder_threshold=settings.ladder_edge,
         fee_rate=settings.fee_rate,
         slippage_bet_size=settings.slippage_bet_size,

@@ -16,7 +16,15 @@ class MarketBucket(BaseModel):
     implied_prob: float  # = market_price
     volume_24h: float = 2000.0  # 24h trading volume in USD
     open_interest: float = 0.0  # Total open interest
+    bid_price: float | None = None
+    ask_price: float | None = None
+    spread: float | None = None
     contract_type: str = "daily"  # daily, weekly, monthly
+    liquidity_score: float = 0.0
+    selected_for_watchlist: bool = False
+    watchlist_rank: int | None = None
+    selection_reason: str | None = None
+    filter_reason: str | None = None
 
 
 class Position(BaseModel):
