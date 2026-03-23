@@ -287,6 +287,51 @@ class TestProcessCity:
         assert orders == 1
 
     @pytest.mark.asyncio
+    async def test_live_mode_uses_configured_market_liquidity_params(self, db, forecast, position):
+        settings = Settings(
+            mode="live",
+            bankroll=1000.0,
+            market_min_volume=2345.0,
+            slippage_bet_size=12.5,
+            cities=[
+                CityConfig(
+                    name="NYC",
+                    lat=40.77,
+                    lon=-73.87,
+                    timezone="America/New_York",
+                )
+            ],
+        )
+        executor = self._make_executor()
+        poly_client = MagicMock()
+        raw = {"some": "data"}
+
+        with (
+            patch("wedge.pipeline.fetch_ensemble", return_value=raw),
+            patch("wedge.pipeline.parse_distribution", return_value=forecast),
+            patch(
+                "wedge.pipeline.scan_weather_markets",
+                new_callable=AsyncMock,
+                return_value=[MagicMock()],
+            ) as mock_scan,
+            patch("wedge.pipeline.detect_edges", return_value=[MagicMock()]) as mock_detect,
+            patch("wedge.pipeline.evaluate_ladder", return_value=[position]),
+        ):
+            orders = await self._call(
+                db, settings, forecast, executor, poly_client=poly_client
+            )
+
+        assert orders == 1
+        mock_scan.assert_awaited_once_with(
+            poly_client,
+            "NYC",
+            date(2026, 3, 20),
+            min_volume=2345.0,
+        )
+        assert mock_detect.call_count == 1
+        assert mock_detect.call_args.kwargs["slippage_bet_size"] == 12.5
+
+    @pytest.mark.asyncio
     async def test_live_mode_without_poly_client_no_markets(self, db, forecast):
         settings = Settings(
             mode="live",

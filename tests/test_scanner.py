@@ -221,10 +221,10 @@ class TestScanWeatherMarkets:
             ],
         )
         # Add volume data (below threshold)
-        event["markets"][0]["volume24h"] = 1000  # Below $5K threshold
+        event["markets"][0]["volume24h"] = 1000  # Below $2K threshold
 
         client = _make_client(event)
-        result = await scan_weather_markets(client, "NYC", TARGET_DATE, min_volume=5000)
+        result = await scan_weather_markets(client, "NYC", TARGET_DATE, min_volume=2000)
 
         # Should be filtered out due to low volume
         assert len(result) == 0
@@ -243,13 +243,13 @@ class TestScanWeatherMarkets:
             ],
         )
         # Add volume data (above threshold)
-        event["markets"][0]["volume24h"] = 10000  # Above $5K threshold
+        event["markets"][0]["volume24h"] = 10000  # Above $2K threshold
 
         client = AsyncMock()
         client.get_event_by_slug.side_effect = lambda slug: event if "on-july-4" in slug else None
 
         result = await scan_weather_markets(
-            client, "NYC", TARGET_DATE, min_volume=5000, include_weekly=False, include_monthly=False
+            client, "NYC", TARGET_DATE, min_volume=2000, include_weekly=False, include_monthly=False
         )
 
         # Should be included

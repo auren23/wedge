@@ -72,6 +72,8 @@ wedge backtest --days 30
 |-----|------|--------|------|
 | `ladder_edge` | float | `0.08` | Ladder 最低 edge 阈值 |
 | `ladder_alloc` | float | `0.90` | 预留给 ladder 的资金占比 |
+| `market_min_volume` | float | `2000.0` | 市场扫描最低 24h 成交量，低于该值直接过滤 |
+| `slippage_bet_size` | float | `50.0` | EV 滑点估算使用的参考下单金额 |
 | `spread_baseline_f` | float | `3.0` | ensemble spread 折扣基线 |
 
 ### 退出 / 风控参数

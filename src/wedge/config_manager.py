@@ -37,6 +37,8 @@ def init(force: bool = typer.Option(False, "--force", help="Overwrite existing c
         "kelly_fraction": 0.15,
         "ladder_edge": 0.08,
         "ladder_alloc": 0.90,
+        "market_min_volume": 2000.0,
+        "slippage_bet_size": 50.0,
         "fee_rate": 0.02,
         "exit_loss_factor": 0.75,
         "exit_min_ev": 0.01,

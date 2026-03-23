@@ -90,7 +90,7 @@ def detect_edges(
             lookup_temp = bucket.temp_value
 
         p_model = forecast.buckets.get(lookup_temp, 0.0)
-        volume_24h = getattr(bucket, "volume_24h", 5000.0)
+        volume_24h = getattr(bucket, "volume_24h", 2000.0)
         slippage = estimate_slippage(volume_24h, bet_size=slippage_bet_size)
         edge = p_model - bucket.market_price
 

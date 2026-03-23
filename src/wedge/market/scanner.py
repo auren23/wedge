@@ -58,7 +58,7 @@ _CITY_TO_SLUG = {
 }
 
 # Liquidity thresholds
-_MIN_VOLUME_24H = 5000.0  # Minimum $5K daily volume
+_MIN_VOLUME_24H = 2000.0  # Minimum $2K daily volume
 _MIN_OPEN_INTEREST = 1000.0  # Minimum $1K open interest
 
 
@@ -140,7 +140,7 @@ async def scan_weather_markets(
         client: Polymarket API client
         city: City name (e.g., "NYC", "London")
         target_date: Target date for daily contracts, or date within week/month
-        min_volume: Minimum 24h volume in USD (default $5K)
+        min_volume: Minimum 24h volume in USD (default $2K)
         include_weekly: Include weekly contracts (default True)
         include_monthly: Include monthly contracts (default True)
 

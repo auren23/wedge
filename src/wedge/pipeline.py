@@ -123,7 +123,10 @@ async def run_pipeline(settings: Settings, db: Database) -> None:
                     # Update position prices for dry-run mode
                     if settings.mode == "dry_run" and poly_client:
                         markets = await scan_weather_markets(
-                            poly_client, city_cfg.name, target_date
+                            poly_client,
+                            city_cfg.name,
+                            target_date,
+                            min_volume=settings.market_min_volume,
                         )
                         await executor.update_position_prices(markets)
 
@@ -209,7 +212,12 @@ async def _process_city(
 
     # 4. Scan market (prefer real market data when available)
     if poly_client:
-        markets = await scan_weather_markets(poly_client, city_cfg.name, target_date)
+        markets = await scan_weather_markets(
+            poly_client,
+            city_cfg.name,
+            target_date,
+            min_volume=settings.market_min_volume,
+        )
     elif settings.mode == "dry_run":
         log.warning("no_polymarket_client_using_synthetic", city=city_cfg.name)
         markets = _generate_synthetic_markets(forecast, city_cfg.name, target_date)
@@ -226,6 +234,7 @@ async def _process_city(
         markets,
         ladder_threshold=settings.ladder_edge,
         fee_rate=settings.fee_rate,
+        slippage_bet_size=settings.slippage_bet_size,
     )
     if not signals:
         log.info("no_edges", city=city_cfg.name)
@@ -719,7 +728,12 @@ async def run_market_exit_check(
                 if not city_cfg:
                     continue
                 target_date = date.fromisoformat(date_str)
-                markets = await scan_weather_markets(poly_client, city_name, target_date)
+                markets = await scan_weather_markets(
+                    poly_client,
+                    city_name,
+                    target_date,
+                    min_volume=settings.market_min_volume,
+                )
                 # Find matching market bucket
                 matching = [m for m in markets if m.temp_value == temp_f]
                 if not matching:

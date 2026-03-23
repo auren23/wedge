@@ -24,6 +24,17 @@ class TestSettingsLadderOnly:
         assert not hasattr(settings, "telegram_token")
 
 
+
+    def test_settings_load_accepts_market_liquidity_overrides(self):
+        settings = Settings.load(
+            mode="dry_run",
+            market_min_volume=2000.0,
+            slippage_bet_size=25.0,
+        )
+
+        assert settings.market_min_volume == 2000.0
+        assert settings.slippage_bet_size == 25.0
+
 class TestCliLadderOnly:
     def test_run_command_exposes_only_ladder_options(self):
         from typer.main import get_command

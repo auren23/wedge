@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     # Ladder strategy
     ladder_edge: float = 0.06
     ladder_alloc: float = 0.95
+    market_min_volume: float = 2000.0  # Minimum 24h volume for market inclusion
+    slippage_bet_size: float = 50.0  # Reference bet size for EV slippage estimation
 
     # Fees and execution
     fee_rate: float = 0.02  # Polymarket 2% fee on winnings
