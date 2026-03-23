@@ -98,31 +98,35 @@ def _member_file(member_id: str, cycle_hour: int, forecast_hour: int) -> str:
 
 
 def _extract_point_temperature_f(grib_bytes: bytes, city: CityConfig) -> float | None:
-    import io
+    import os
+    import tempfile
 
     handle = None
+    tmp_path = None
     try:
-        with io.BytesIO(grib_bytes) as fh:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".grib2") as tmp:
+            tmp.write(grib_bytes)
+            tmp_path = tmp.name
+        with open(tmp_path, "rb") as fh:
             handle = codes_grib_new_from_file(fh)
-            if handle is None:
-                return None
-            try:
-                nearest = codes_grib_find_nearest(handle, city.lat, city.lon)
-                if nearest and isinstance(nearest, (list, tuple)):
-                    candidate = nearest[0]
-                    value = candidate.get("value") if isinstance(candidate, dict) else None
-                    if value is not None and math.isfinite(value):
-                        return float(value)
-            except Exception:
-                pass
-
-            values = codes_get_array(handle, "values")
-            if values is None or len(values) == 0:
-                return None
-            finite_values = [float(v) for v in values if math.isfinite(v)]
-            if not finite_values:
-                return None
-            return finite_values[0]
+        if handle is None:
+            return None
+        try:
+            nearest = codes_grib_find_nearest(handle, city.lat, city.lon)
+            if nearest and isinstance(nearest, (list, tuple)):
+                candidate = nearest[0]
+                value = candidate.get("value") if isinstance(candidate, dict) else None
+                if value is not None and math.isfinite(value):
+                    return float(value)
+        except Exception:
+            pass
+        values = codes_get_array(handle, "values")
+        if values is None or len(values) == 0:
+            return None
+        finite_values = [float(v) for v in values if math.isfinite(v)]
+        if not finite_values:
+            return None
+        return finite_values[0]
     except Exception as exc:  # noqa: BLE001
         log.warning("noaa_grib_parse_failed", city=city.name, error=str(exc))
         return None
@@ -131,6 +135,11 @@ def _extract_point_temperature_f(grib_bytes: bytes, city: CityConfig) -> float |
             try:
                 codes_release(handle)
             except Exception:  # pragma: no cover
+                pass
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
                 pass
 
 
