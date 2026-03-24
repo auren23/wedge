@@ -311,7 +311,7 @@ async def check_exit_positions(
         for pos in positions:
             city_name = pos["city"]
             date_str = pos["date"]
-            temp_f = pos["temp_f"]
+            temp_f = pos["temp_value"]
             entry_price = pos["entry_price"]
             size = pos["size"]
 
@@ -692,7 +692,7 @@ async def run_market_exit_check(
         for pos in positions:
             city_name = pos["city"]
             date_str = pos["date"]
-            temp_f = pos["temp_f"]
+            temp_f = pos["temp_value"]
             entry_price = pos["entry_price"]
             size = pos["size"]
 
