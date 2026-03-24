@@ -67,6 +67,7 @@ class LiveExecutor:
                 temp_f=request.temp_value,
                 temp_unit=request.temp_unit,
                 strategy=request.strategy,
+                side=request.side,
                 entry_price=request.limit_price,
                 size=request.size,
                 p_model=request.p_model,

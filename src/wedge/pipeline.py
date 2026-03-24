@@ -406,24 +406,37 @@ async def check_exit_positions(
                 await db.update_peak_p_model(city_name, date_str, temp_f, peak_p_model)
 
             # Exit check uses p_model directly (model's fair value)
-            # Take-profit: exit if p_model dropped back to/below entry (edge gone)
-            profit_pct = (p_model - entry_price) / entry_price if entry_price > 0 else 0
-
+            side = pos.get("side", "buy")  # default buy for legacy rows
             exit_reason: str | None = None
 
-            if p_model < entry_price * settings.exit_loss_factor:
-                # Probability collapsed — stop loss
-                exit_reason = "stop_loss"
-            elif settings.trailing_activation_pct > 0 and entry_price > 0:
-                # Trailing stop: let profits run, then protect gains
-                profit_pct = (p_model - entry_price) / entry_price
-                if profit_pct >= settings.trailing_activation_pct:
-                    trail_line = peak_p_model * (1.0 - settings.trailing_pct)
-                    if p_model < trail_line:
-                        exit_reason = "trailing_stop"
-            if exit_reason is None and p_model < entry_price:
-                # p_model dropped back to/below entry — edge is gone, take profit
-                exit_reason = "take_profit"
+            if side == "sell":  # bought No — profit when p_model stays LOW
+                no_entry = 1.0 - entry_price  # price paid for No contract
+                no_p_model = 1.0 - p_model    # model's fair value for No
+                # Stop-loss: model now agrees temperature WILL happen (No collapsed)
+                if p_model > (1.0 - no_entry * settings.exit_loss_factor):
+                    exit_reason = "stop_loss"
+                elif settings.trailing_activation_pct > 0 and no_entry > 0:
+                    # Trailing stop on No side: No price risen from peak, now falling
+                    profit_pct = (no_p_model - no_entry) / no_entry
+                    if profit_pct >= settings.trailing_activation_pct:
+                        trail_line = peak_p_model * (1.0 - settings.trailing_pct)
+                        if p_model > trail_line:
+                            exit_reason = "trailing_stop"
+                if exit_reason is None and no_p_model < no_entry:
+                    # Edge gone: model now thinks No is fairly priced or worse
+                    exit_reason = "take_profit"
+            else:  # bought Yes
+                profit_pct = (p_model - entry_price) / entry_price if entry_price > 0 else 0
+                if p_model < entry_price * settings.exit_loss_factor:
+                    exit_reason = "stop_loss"
+                elif settings.trailing_activation_pct > 0 and entry_price > 0:
+                    profit_pct = (p_model - entry_price) / entry_price
+                    if profit_pct >= settings.trailing_activation_pct:
+                        trail_line = peak_p_model * (1.0 - settings.trailing_pct)
+                        if p_model < trail_line:
+                            exit_reason = "trailing_stop"
+                if exit_reason is None and p_model < entry_price:
+                    exit_reason = "take_profit"
             if exit_reason is None:
                 # Log trailing stop status if activated
                 if settings.trailing_activation_pct > 0 and entry_price > 0:
@@ -774,18 +787,33 @@ async def run_market_exit_check(
                 await db.update_peak_p_model(city_name, date_str, temp_f, peak_p_model)
 
             remaining = pos.get("remaining_size", size) or size
+            side = pos.get("side", "buy")  # default buy for legacy rows
             exit_reason: str | None = None
 
-            # 1. Stop-loss: market price collapsed
-            if market_price < entry_price * settings.exit_loss_factor:
-                exit_reason = "stop_loss"
-            # 2. Trailing stop: market price dropped from peak
-            elif settings.trailing_activation_pct > 0 and entry_price > 0:
-                profit_pct = (market_price - entry_price) / entry_price
-                if profit_pct >= settings.trailing_activation_pct:
-                    trail_line = peak_p_model * (1.0 - settings.trailing_pct)
-                    if market_price < trail_line:
-                        exit_reason = "trailing_stop"
+            if side == "sell":  # bought No — profit when market_price (No price) stays HIGH
+                no_entry = 1.0 - entry_price   # price paid for No
+                no_market = 1.0 - market_price  # current No market price
+                # 1. Stop-loss: No price collapsed (market now believes temp WILL happen)
+                if no_market < no_entry * settings.exit_loss_factor:
+                    exit_reason = "stop_loss"
+                # 2. Trailing stop: No price risen then fallen from peak
+                elif settings.trailing_activation_pct > 0 and no_entry > 0:
+                    profit_pct = (no_market - no_entry) / no_entry
+                    if profit_pct >= settings.trailing_activation_pct:
+                        trail_line = (1.0 - peak_p_model) * (1.0 - settings.trailing_pct)
+                        if no_market < trail_line:
+                            exit_reason = "trailing_stop"
+            else:  # bought Yes
+                # 1. Stop-loss: market price collapsed
+                if market_price < entry_price * settings.exit_loss_factor:
+                    exit_reason = "stop_loss"
+                # 2. Trailing stop: market price dropped from peak
+                elif settings.trailing_activation_pct > 0 and entry_price > 0:
+                    profit_pct = (market_price - entry_price) / entry_price
+                    if profit_pct >= settings.trailing_activation_pct:
+                        trail_line = peak_p_model * (1.0 - settings.trailing_pct)
+                        if market_price < trail_line:
+                            exit_reason = "trailing_stop"
             # 3. Tier exits (partial)
             if exit_reason is None and settings.exit_tier_pcts and settings.exit_tier_portions:
                 if remaining > 0 and entry_price > 0:

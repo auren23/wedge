@@ -140,6 +140,7 @@ class Database:
             "ALTER TABLE market_discoveries ADD COLUMN spread REAL",
             "ALTER TABLE market_discoveries ADD COLUMN selection_reason TEXT",
             "ALTER TABLE market_discoveries ADD COLUMN filter_reason TEXT",
+            "ALTER TABLE trades ADD COLUMN side TEXT NOT NULL DEFAULT 'buy'",
         ]:
             try:
                 await self._conn.execute(migration_sql)
@@ -199,15 +200,16 @@ class Database:
         edge: float,
         token_id: str | None = None,
         order_id: str | None = None,
+        side: str = "buy",
         created_at: str,
     ) -> bool:
         """Insert trade idempotently. Returns True if inserted, False if duplicate."""
         try:
             await self.conn.execute(
                 """INSERT INTO trades
-                   (run_id, city, date, temp_f, temp_unit, strategy, entry_price, size,
+                   (run_id, city, date, temp_f, temp_unit, strategy, side, entry_price, size,
                     p_model, p_market, edge, token_id, order_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     city,
@@ -215,6 +217,7 @@ class Database:
                     temp_f,
                     temp_unit,
                     strategy,
+                    side,
                     entry_price,
                     size,
                     p_model,
@@ -738,7 +741,7 @@ class Database:
         """Get all unsettled positions."""
         cursor = await self.conn.execute(
             """SELECT city, date, temp_f AS temp_value, temp_unit,
-                      strategy, entry_price, size, p_model, edge,
+                      strategy, side, entry_price, size, p_model, edge,
                       peak_p_model, remaining_size, created_at
                FROM trades
                WHERE settled = 0
