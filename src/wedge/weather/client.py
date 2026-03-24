@@ -111,13 +111,16 @@ def _extract_point_temperature_f(grib_bytes: bytes, city: CityConfig) -> float |
             handle = codes_grib_new_from_file(fh)
         if handle is None:
             return None
+        def _kelvin_to_f(k: float) -> float:
+            return (k - 273.15) * 9 / 5 + 32
+
         try:
             nearest = codes_grib_find_nearest(handle, city.lat, city.lon)
             if nearest and isinstance(nearest, (list, tuple)):
                 candidate = nearest[0]
                 value = candidate.get("value") if isinstance(candidate, dict) else None
                 if value is not None and math.isfinite(value):
-                    return float(value)
+                    return _kelvin_to_f(float(value))
         except Exception:
             pass
         values = codes_get_array(handle, "values")
@@ -126,7 +129,7 @@ def _extract_point_temperature_f(grib_bytes: bytes, city: CityConfig) -> float |
         finite_values = [float(v) for v in values if math.isfinite(v)]
         if not finite_values:
             return None
-        return finite_values[0]
+        return _kelvin_to_f(finite_values[0])
     except Exception as exc:  # noqa: BLE001
         log.warning("noaa_grib_parse_failed", city=city.name, error=str(exc))
         return None
