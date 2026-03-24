@@ -80,7 +80,7 @@ wedge backtest --days 30
 
 | Key | 类型 | 默认值 | 说明 |
 |-----|------|--------|------|
-| `fee_rate` | float | `0.02` | 盈利部分手续费 |
+| `fee_rate` | float | `0.0` | 天气市场默认无手续费；仅在显式配置时收取盈利手续费 |
 | `exit_loss_factor` | float | `0.5` | 相对入场价的止损触发因子 |
 | `exit_min_ev` | float | `0.0` | edge 消失后的退出阈值 |
 | `exit_min_hours_to_settle` | int | `12` | 距离结算太近时不提前退出 |

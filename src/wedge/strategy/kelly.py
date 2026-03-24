@@ -29,6 +29,7 @@ def fractional_kelly(
     funding_rate: float = 0.08,  # Annual funding cost
     ensemble_spread: float = 0.0,  # Forecast ensemble spread in °F
     spread_baseline: float = 3.0,  # Baseline spread for damping normalization
+    fee_rate: float = 0.0,  # Weather markets are fee-free by default
 ) -> KellyResult:
     """Calculate fractional Kelly bet size with binary option corrections.
 
@@ -148,7 +149,6 @@ def fractional_kelly(
     reasoning_parts.append(f"edge: {(p_model - market_price) * 100:.1f}%")
 
     # Calculate EV for reporting
-    fee_rate = 0.02  # Polymarket 2% fee on winnings
     ev = p_model * (1 - fee_rate) / market_price - 1.0
 
     if not math.isfinite(bet):  # pragma: no cover

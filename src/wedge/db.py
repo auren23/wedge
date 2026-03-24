@@ -440,7 +440,7 @@ class Database:
         city: str,
         date: str,
         actual_temp: int,
-        fee_rate: float = 0.02,
+        fee_rate: float = 0.0,
     ) -> int:
         """Settle all unsettled trades for a city/date. Returns count settled.
 
@@ -450,7 +450,7 @@ class Database:
             city: City name
             date: Date string (ISO format)
             actual_temp: Actual temperature in Fahrenheit
-            fee_rate: Fee rate on profits (default 2% for Polymarket)
+            fee_rate: Fee rate on profits (default 0 for weather markets)
         """
         cursor = await self.conn.execute(
             "SELECT id, temp_f, entry_price, size, remaining_size FROM trades "

@@ -269,6 +269,7 @@ async def _process_city(
         max_bet=settings.max_bet,
         max_bet_pct=settings.max_bet_pct,
         spread_baseline=settings.spread_baseline_f,
+        fee_rate=settings.fee_rate,
     )
 
     # 7. Execute orders

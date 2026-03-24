@@ -108,9 +108,9 @@ class TestPipelineLadderOnly:
             ),
             patch("wedge.pipeline.parse_distribution", return_value=forecast),
             patch(
-                "wedge.pipeline.scan_weather_markets",
+                "wedge.pipeline.discover_weather_markets",
                 new_callable=AsyncMock,
-                return_value=markets,
+                return_value=(markets, []),
             ),
         ):
             orders = await _process_city(

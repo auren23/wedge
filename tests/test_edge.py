@@ -104,6 +104,12 @@ class TestEVCalculation:
         # = 0.30 * 0.98 / 0.20 - 1 = 1.47 - 1 = 0.47
         assert ev_with_fee == pytest.approx(0.47, rel=0.01)
 
+    def test_calculate_ev_defaults_to_fee_free_weather_market(self):
+        """Weather markets should only pay slippage/liquidity costs by default."""
+        ev_default = calculate_ev(0.30, 0.20, slippage=0.0)
+        ev_fee_free = calculate_ev(0.30, 0.20, fee_rate=0.0, slippage=0.0)
+        assert ev_default == pytest.approx(ev_fee_free, rel=0.01)
+
     def test_calculate_ev_negative(self):
         """Test negative EV (bad bet)."""
         # p_model = 0.20, market_price = 0.30 (model says lower than market)
@@ -112,8 +118,8 @@ class TestEVCalculation:
 
     def test_calculate_ev_with_slippage(self):
         """Test EV calculation with slippage."""
-        ev_no_slip = calculate_ev(0.30, 0.20, fee_rate=0.02, slippage=0.0)
-        ev_with_slip = calculate_ev(0.30, 0.20, fee_rate=0.02, slippage=0.02)
+        ev_no_slip = calculate_ev(0.30, 0.20, fee_rate=0.0, slippage=0.0)
+        ev_with_slip = calculate_ev(0.30, 0.20, fee_rate=0.0, slippage=0.02)
         # Slippage reduces EV
         assert ev_with_slip < ev_no_slip
 
@@ -182,6 +188,12 @@ class TestShortEV:
         # ev = 0.95 * 0.98 * 0.1765 - 0.05 = 0.114
         ev = calculate_ev_short(0.05, 0.15, fee_rate=0.02)
         assert ev == pytest.approx(0.114, rel=0.02)
+
+    def test_short_ev_defaults_to_fee_free_weather_market(self):
+        """Buying No in weather markets should default to zero fees."""
+        ev_default = calculate_ev_short(0.05, 0.15)
+        ev_fee_free = calculate_ev_short(0.05, 0.15, fee_rate=0.0)
+        assert ev_default == pytest.approx(ev_fee_free, rel=0.01)
 
     def test_short_ev_negative_when_model_higher(self):
         """p_model=0.30, market=0.20 → no short edge"""

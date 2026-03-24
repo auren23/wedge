@@ -109,8 +109,7 @@ class Settings(BaseSettings):
     slippage_bet_size: float = 50.0  # Reference bet size for EV slippage estimation
 
     # Fees and execution
-    fee_rate: float = 0.02  # Polymarket 2% fee on winnings
-
+    fee_rate: float = 0.0  # Weather markets are fee-free; only slippage/liquidity apply
     # Exit strategy (probability-based)
     exit_loss_factor: float = 0.75  # Exit when p_model drops to 75% of entry
     exit_min_ev: float = 0.01  # Exit when edge drops below 1%

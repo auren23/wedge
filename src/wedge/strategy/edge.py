@@ -7,7 +7,7 @@ from wedge.strategy.models import EdgeSignal
 from wedge.weather.models import ForecastDistribution
 
 _EPS = 1e-6
-_DEFAULT_FEE_RATE = 0.02
+_DEFAULT_FEE_RATE = 0.0
 
 
 def estimate_slippage(volume_24h: float, bet_size: float) -> float:

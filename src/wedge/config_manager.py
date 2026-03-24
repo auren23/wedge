@@ -42,7 +42,7 @@ def init(force: bool = typer.Option(False, "--force", help="Overwrite existing c
         "market_max_spread": 0.10,
         "market_watchlist_size": 5,
         "slippage_bet_size": 50.0,
-        "fee_rate": 0.02,
+        "fee_rate": 0.0,
         "exit_loss_factor": 0.75,
         "exit_min_ev": 0.01,
         "exit_min_hours_to_settle": 6,

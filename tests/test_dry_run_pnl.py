@@ -71,7 +71,7 @@ async def test_unrealized_pnl_calculation(db):
 
 @pytest.mark.asyncio
 async def test_settled_pnl_with_fee(db):
-    """Test settled P&L includes 2% Polymarket fee on profits."""
+    """Test settled P&L defaults to zero fees for weather markets."""
     # Insert a winning trade
     await db.insert_run("test_run", datetime.now(UTC).isoformat())
     await db.insert_trade(
@@ -98,8 +98,7 @@ async def test_settled_pnl_with_fee(db):
     summary = await db.get_pnl_summary(days=30)
 
     # Expected: (1.0 - 0.40) * 100 / 0.40 = 150
-    # After 2% fee: 150 * 0.98 = 147
-    expected_pnl = 147.0
+    expected_pnl = 150.0
     assert abs(summary["total_pnl"] - expected_pnl) < 0.01, (
         f"Expected P&L ~{expected_pnl}, got {summary['total_pnl']}"
     )

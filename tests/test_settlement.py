@@ -88,14 +88,14 @@ class TestSettleTrades:
         assert count == 1
 
         # Verify pnl: outcome=1.0, pnl = (1.0 - 0.20) * 10.0 / 0.20 = 40.0
-        # After 2% fee on profit: 40.0 * 0.98 = 39.2
+        # Weather settlement should default to zero fees.
         cursor = await db.conn.execute(
             "SELECT settled, outcome, pnl FROM trades WHERE run_id='run1'"
         )
         row = await cursor.fetchone()
         assert row["settled"] == 1
         assert row["outcome"] == 1.0
-        assert abs(row["pnl"] - 39.2) < 1e-9  # 2% fee applied
+        assert abs(row["pnl"] - 40.0) < 1e-9
 
     @pytest.mark.asyncio
     async def test_losing_trade_pnl(self, db):

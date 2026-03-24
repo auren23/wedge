@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -58,6 +59,11 @@ class TestKelly:
         assert abs(result.edge - 0.10) < 0.001  # Floating point tolerance
         assert result.ev > 0
         assert result.reasoning != ""
+
+    def test_kelly_result_ev_defaults_to_fee_free_weather_market(self):
+        result = fractional_kelly(p_model=0.40, market_price=0.30, bankroll=1000)
+        expected_ev = 0.40 / 0.30 - 1.0
+        assert result.ev == pytest.approx(expected_ev, rel=0.01)
 
     def test_fat_tail_discount_applied(self):
         """Test that fat tail discount (0.8) is applied."""
